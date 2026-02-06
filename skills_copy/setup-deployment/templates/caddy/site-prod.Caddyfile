@@ -1,0 +1,108 @@
+# ============================================
+# Caddyfile - Environnement Prod
+# ============================================
+# Template variables:
+#   {{DOMAIN_PROD}} - Domaine prod (ex: app.com)
+#   {{BACKEND_PORT}} - Port backend (8000)
+#   {{FRONTEND_PORT}} - Port frontend (80 dans container)
+# ============================================
+
+{{DOMAIN_PROD}} {
+    # ==========================================
+    # Logging (less verbose in prod)
+    # ==========================================
+    log {
+        output file /var/log/caddy/{{DOMAIN_PROD}}.log {
+            roll_size 50mb
+            roll_keep 10
+        }
+        format json
+        level WARN
+    }
+
+    # ==========================================
+    # Security Headers (stricter for prod)
+    # ==========================================
+    header {
+        # HSTS (2 years for prod)
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        # Prevent clickjacking
+        X-Frame-Options "DENY"
+        # Prevent MIME type sniffing
+        X-Content-Type-Options "nosniff"
+        # XSS Protection
+        X-XSS-Protection "1; mode=block"
+        # Referrer Policy (stricter)
+        Referrer-Policy "strict-origin"
+        # Content Security Policy
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://{{DOMAIN_PROD}}; frame-ancestors 'none';"
+        # Permissions Policy
+        Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+        # Remove server header
+        -Server
+    }
+
+    # ==========================================
+    # Compression
+    # ==========================================
+    encode gzip zstd
+
+    # ==========================================
+    # Rate Limiting (prod only)
+    # ==========================================
+    # Note: Requires caddy-ratelimit plugin
+    # rate_limit {
+    #     zone static_zone {
+    #         key static
+    #         events 100
+    #         window 1m
+    #     }
+    # }
+
+    # ==========================================
+    # API Routes → Backend
+    # ==========================================
+    handle /api/* {
+        reverse_proxy localhost:{{BACKEND_PORT}} {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+
+            # Health checks
+            health_uri /health
+            health_interval 30s
+            health_timeout 10s
+
+            # Timeouts
+            transport http {
+                read_timeout 60s
+                write_timeout 60s
+            }
+        }
+    }
+
+    # ==========================================
+    # Health check endpoint
+    # ==========================================
+    handle /health {
+        respond "OK" 200
+    }
+
+    # ==========================================
+    # Static Files → Frontend
+    # ==========================================
+    handle {
+        reverse_proxy localhost:{{FRONTEND_PORT}} {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+}
+
+# ==========================================
+# Redirect www to non-www
+# ==========================================
+www.{{DOMAIN_PROD}} {
+    redir https://{{DOMAIN_PROD}}{uri} permanent
+}
